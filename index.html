@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Prism Gate</title>
+  <meta name="description" content="Tap to cycle hues. Matching shards pass. Wrong color cracks the glass." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { height: 100%; background: #070712; color: #f4f1ff; overflow: hidden; touch-action: none; font-family: "IBM Plex Sans", sans-serif; }
+    canvas { display: block; width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+  (() => {
+    const BEST_KEY = "prism-gate-best";
+    const HUES = [
+      { name: "MAGENTA", fill: "#ff3d8a", glow: "#ff7ab3" },
+      { name: "CYAN", fill: "#3dfff3", glow: "#9dfff8" },
+      { name: "GOLD", fill: "#ffd166", glow: "#ffe8a3" },
+    ];
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d");
+    let w = innerWidth, h = innerHeight, dpr = 1, last = performance.now(), audio = null;
+    const world = {
+      mode: "start", score: 0, best: 0, combo: 0, lives: 3, hue: 0,
+      shards: [], sparks: [], floats: [], spawn: 0.7, elapsed: 0,
+      trauma: 0, hitstop: 0, pulse: 0, cracks: 0, flash: 0, gateScale: 1,
+    };
+    try { world.best = Number(localStorage.getItem(BEST_KEY) || 0) || 0; } catch (e) {}
+
+    function unlock() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!audio) audio = new AC({ latencyHint: "interactive" });
+      if (audio.state === "suspended") audio.resume();
+    }
+    function tone(freq, dur, type, gain) {
+      if (!audio) return;
+      const t = audio.currentTime;
+      const o = audio.createOscillator();
+      const g = audio.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(gain, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(audio.destination);
+      o.start(t); o.stop(t + dur);
+    }
+    function burst(x, y, hue, n) {
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2, sp = 80 + Math.random() * 280;
+        world.sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, max: 0.35 + Math.random() * 0.4, hue, s: 2 + Math.random() * 3 });
+      }
+    }
+    function resize() {
+      w = innerWidth; h = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = Math.floor(w * dpr); canvas.height = Math.floor(h * dpr);
+      canvas.style.width = w + "px"; canvas.style.height = h + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    function resetPlay() {
+      world.mode = "play"; world.score = 0; world.combo = 0; world.lives = 3;
+      world.hue = 0; world.shards = []; world.sparks = []; world.floats = [];
+      world.spawn = 0.55; world.elapsed = 0; world.trauma = 0; world.hitstop = 0;
+      world.cracks = 0; world.flash = 0; world.gateScale = 1;
+    }
+    function cycle() {
+      world.hue = (world.hue + 1) % HUES.length;
+      world.gateScale = 1.18; world.pulse = 1;
+      tone(220 + world.hue * 90, 0.08, "triangle", 0.05);
+    }
+    function act() {
+      unlock();
+      if (world.mode === "start" || world.mode === "over") resetPlay();
+      else cycle();
+    }
+    function spawnShard() {
+      world.shards.push({
+        x: (0.5 + (Math.random() - 0.5) * 0.42) * w, y: -40,
+        hue: Math.floor(Math.random() * HUES.length),
+        vy: 170 + world.elapsed * 14 + Math.random() * 40,
+        spin: (Math.random() - 0.5) * 4, rot: Math.random() * Math.PI,
+        w: 22 + Math.random() * 8, h: 38 + Math.random() * 14,
+      });
+    }
+    function fail(sh) {
+      world.lives -= 1; world.combo = 0; world.cracks += 1;
+      world.trauma = Math.min(1, world.trauma + 0.55); world.hitstop = 0.07; world.flash = 0.35;
+      burst(sh.x, sh.y, "#ff5a6a", 22); tone(90, 0.22, "sawtooth", 0.07);
+      if (world.lives <= 0) {
+        world.mode = "over";
+        if (world.score > world.best) {
+          world.best = world.score;
+          try { localStorage.setItem(BEST_KEY, String(world.best)); } catch (e) {}
+        }
+        tone(70, 0.4, "square", 0.06);
+      }
+    }
+    function pass(sh) {
+      world.combo += 1;
+      const add = 1 + Math.floor(world.combo / 4);
+      world.score += add;
+      world.floats.push({ x: sh.x, y: sh.y, life: 1, text: world.combo >= 4 ? "+" + add + "  " + world.combo + "x" : "+" + add, hue: HUES[sh.hue].glow });
+      world.trauma = Math.min(1, world.trauma + 0.16); world.gateScale = 1.12;
+      burst(sh.x, sh.y, HUES[sh.hue].fill, 14);
+      tone(420 + world.combo * 28, 0.12, "sine", 0.06);
+    }
+    function step(dt) {
+      if (world.hitstop > 0) { world.hitstop -= dt; return; }
+      world.elapsed += dt;
+      world.trauma = Math.max(0, world.trauma - dt * 1.8);
+      world.flash = Math.max(0, world.flash - dt * 2.4);
+      world.gateScale += (1 - world.gateScale) * (1 - Math.exp(-12 * dt));
+      for (const s of world.sparks) { s.x += s.vx * dt; s.y += s.vy * dt; s.vy += 420 * dt; s.life -= dt / s.max; }
+      world.sparks = world.sparks.filter((s) => s.life > 0);
+      for (const f of world.floats) { f.y -= 48 * dt; f.life -= dt * 1.3; }
+      world.floats = world.floats.filter((f) => f.life > 0);
+      if (world.mode !== "play") return;
+      world.spawn -= dt;
+      if (world.spawn <= 0) {
+        spawnShard();
+        if (world.elapsed > 18 && Math.random() < 0.22) spawnShard();
+        world.spawn = Math.max(0.38, 0.95 - world.elapsed * 0.035);
+      }
+      const gateY = h * 0.78;
+      for (const sh of world.shards) { sh.y += sh.vy * dt; sh.rot += sh.spin * dt; }
+      const kept = [];
+      for (const sh of world.shards) {
+        if (sh.y >= gateY) { if (sh.hue === world.hue) pass(sh); else fail(sh); }
+        else kept.push(sh);
+      }
+      world.shards = kept;
+    }
+    function drawPrism(cx, cy, scale, fill, glow) {
+      ctx.save(); ctx.translate(cx, cy); ctx.scale(scale, scale);
+      ctx.shadowColor = glow; ctx.shadowBlur = 28;
+      ctx.beginPath(); ctx.moveTo(0, -52); ctx.lineTo(92, 46); ctx.lineTo(-92, 46); ctx.closePath();
+      ctx.fillStyle = fill; ctx.globalAlpha = 0.92; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = glow; ctx.lineWidth = 3; ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.beginPath(); ctx.moveTo(0, -28); ctx.lineTo(38, 28); ctx.lineTo(-38, 28); ctx.closePath();
+      ctx.fillStyle = "rgba(255,255,255,0.22)"; ctx.fill();
+      if (world.cracks > 0) {
+        ctx.strokeStyle = "rgba(7,7,18,0.7)"; ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(-12, -10); ctx.lineTo(8, 18); ctx.lineTo(-20, 36);
+        if (world.cracks > 1) { ctx.moveTo(18, -6); ctx.lineTo(4, 22); ctx.lineTo(40, 40); }
+        if (world.cracks > 2) { ctx.moveTo(-40, 20); ctx.lineTo(0, 8); ctx.lineTo(30, 24); }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    function paint() {
+      const shake = world.trauma * world.trauma;
+      const ox = (Math.random() * 2 - 1) * 14 * shake;
+      const oy = (Math.random() * 2 - 1) * 14 * shake;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, "#12081c"); g.addColorStop(0.55, "#070712"); g.addColorStop(1, "#05040c");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      ctx.save(); ctx.translate(ox, oy);
+      for (let i = 0; i < 18; i++) {
+        const px = ((i * 97) % w) + Math.sin(world.elapsed * 0.4 + i) * 8;
+        const py = (i * 73 + world.elapsed * 18) % h;
+        ctx.fillStyle = "rgba(244,241,255," + (0.04 + (i % 3) * 0.02) + ")";
+        ctx.fillRect(px, py, 2, 2);
+      }
+      ctx.strokeStyle = "rgba(61,255,243,0.08)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(w * 0.18, 0); ctx.lineTo(w * 0.28, h);
+      ctx.moveTo(w * 0.82, 0); ctx.lineTo(w * 0.72, h); ctx.stroke();
+      for (const sh of world.shards) {
+        const col = HUES[sh.hue];
+        ctx.save(); ctx.translate(sh.x, sh.y); ctx.rotate(sh.rot);
+        ctx.shadowColor = col.glow; ctx.shadowBlur = 16;
+        ctx.beginPath(); ctx.moveTo(0, -sh.h / 2); ctx.lineTo(sh.w / 2, 0); ctx.lineTo(0, sh.h / 2); ctx.lineTo(-sh.w / 2, 0); ctx.closePath();
+        ctx.fillStyle = col.fill; ctx.fill(); ctx.restore();
+      }
+      for (const s of world.sparks) {
+        ctx.globalAlpha = Math.max(0, s.life); ctx.fillStyle = s.hue;
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      const col = HUES[world.hue];
+      drawPrism(w * 0.5, h * 0.82, world.gateScale, col.fill, col.glow);
+      ctx.font = "700 14px 'IBM Plex Sans', sans-serif"; ctx.fillStyle = col.glow; ctx.textAlign = "center";
+      ctx.fillText(col.name, w * 0.5, h * 0.82 + 72);
+      for (const f of world.floats) {
+        ctx.globalAlpha = Math.max(0, f.life); ctx.fillStyle = f.hue;
+        ctx.font = "800 18px Syne, sans-serif"; ctx.fillText(f.text, f.x, f.y);
+      }
+      ctx.globalAlpha = 1;
+      ctx.textAlign = "left"; ctx.fillStyle = "#f4f1ff"; ctx.font = "800 28px Syne, sans-serif";
+      ctx.fillText(String(world.score), 20, 42);
+      ctx.font = "600 12px 'IBM Plex Sans', sans-serif"; ctx.fillStyle = "#8b87a3"; ctx.fillText("SCORE", 20, 58);
+      ctx.textAlign = "right"; ctx.fillStyle = "#f4f1ff"; ctx.font = "800 20px Syne, sans-serif";
+      ctx.fillText(String(world.best), w - 20, 42);
+      ctx.font = "600 12px 'IBM Plex Sans', sans-serif"; ctx.fillStyle = "#8b87a3"; ctx.fillText("BEST", w - 20, 58);
+      ctx.textAlign = "left";
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = i < world.lives ? col.fill : "rgba(244,241,255,0.12)";
+        ctx.beginPath(); const lx = 20 + i * 18;
+        ctx.moveTo(lx + 6, 74); ctx.lineTo(lx + 14, 88); ctx.lineTo(lx, 88); ctx.closePath(); ctx.fill();
+      }
+      if (world.combo >= 3 && world.mode === "play") {
+        ctx.textAlign = "center"; ctx.fillStyle = col.glow; ctx.font = "800 16px Syne, sans-serif";
+        ctx.fillText(world.combo + "x COMBO", w * 0.5, 46);
+      }
+      if (world.mode === "start" || world.mode === "over") {
+        ctx.fillStyle = "rgba(7,7,18,0.62)"; ctx.fillRect(0, 0, w, h);
+        ctx.textAlign = "center"; ctx.fillStyle = "#f4f1ff"; ctx.font = "800 42px Syne, sans-serif";
+        ctx.fillText("PRISM GATE", w * 0.5, h * 0.36);
+        ctx.fillStyle = "#3dfff3"; ctx.font = "600 15px 'IBM Plex Sans', sans-serif";
+        ctx.fillText(world.mode === "start" ? "Matching shards pass. Wrong color cracks the glass." : "The gate shattered.", w * 0.5, h * 0.36 + 36);
+        if (world.mode === "over") {
+          ctx.fillStyle = "#f4f1ff"; ctx.font = "800 34px Syne, sans-serif"; ctx.fillText(String(world.score), w * 0.5, h * 0.36 + 86);
+          ctx.fillStyle = "#8b87a3"; ctx.font = "600 13px 'IBM Plex Sans', sans-serif";
+          ctx.fillText(world.score >= world.best && world.score > 0 ? "NEW BEST" : "BEST " + world.best, w * 0.5, h * 0.36 + 110);
+        }
+        const bw = Math.min(280, w - 48), bx = (w - bw) / 2, by = h * 0.62;
+        ctx.fillStyle = "#ff3d8a"; ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(bx, by, bw, 52, 14); else ctx.rect(bx, by, bw, 52);
+        ctx.fill();
+        ctx.fillStyle = "#070712"; ctx.font = "800 16px Syne, sans-serif";
+        ctx.fillText(world.mode === "start" ? "TAP TO OPEN" : "TAP TO REFORGE", w * 0.5, by + 33);
+        ctx.fillStyle = "#8b87a3"; ctx.font = "400 13px 'IBM Plex Sans', sans-serif";
+        ctx.fillText("Tap · Click · Space  —  cycle the hue", w * 0.5, by + 78);
+      }
+      ctx.restore();
+      if (world.flash > 0) { ctx.fillStyle = "rgba(255,90,106," + (world.flash * 0.28) + ")"; ctx.fillRect(0, 0, w, h); }
+    }
+    function loop(now) {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now; step(dt); paint(); requestAnimationFrame(loop);
+    }
+    addEventListener("resize", resize);
+    addEventListener("keydown", (e) => {
+      if (e.code === "Space" || e.code === "Enter" || e.code === "ArrowUp") { e.preventDefault(); act(); }
+    });
+    canvas.addEventListener("pointerdown", act);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        last = performance.now();
+        if (audio && audio.state === "suspended") audio.resume();
+      }
+    });
+    resize();
+    requestAnimationFrame(loop);
+  })();
+  </script>
+</body>
+</html>
